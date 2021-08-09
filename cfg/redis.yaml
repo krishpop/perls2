@@ -2,6 +2,6 @@
 
 # Redis-server hosted by NUC for
 redis:
-  host: '172.16.0.1'
+  host: '172.16.0.4'
   port: 6379
   password: null
