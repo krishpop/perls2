@@ -47,9 +47,8 @@ left_gs.start()
 )
 right_gs.start()"""
 
-def encoded_image(img, redisClient):
+def encoded_image(img, redisClient, time_sec, time_micro):
 	"""Returns the image and metadata encoded in a byte string"""
-	time_sec, time_micro = redisClient.time()
 	shape = img.shape
 	meta_data_str = struct.pack(">IIII", time_sec, time_micro, shape[0], shape[1])
 
@@ -62,15 +61,17 @@ def encoded_image(img, redisClient):
 def main():
 	redisClient = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
 	while True:
-		#TODO: Update timestamp code
 		left_img = left_gs.stream.image
+		left_sec, left_micro = redisClient.time()
+
 #		right_img = right_gs.stream.image
+#		right_sec, right_micro = redisClient.time()
 
 		left_img = warp_perspective(left_img, left_gs.corners, left_gs.output_sz)
 #		right_img = warp_perspective(right_img, right_gs.corners, right_gs.output_sz)
 		
-		left_enc = encoded_image(left_img, redisClient)
-#		right_enc = encoded_image(right_img, redisClient)
+		left_enc = encoded_image(left_img, redisClient, left_sec, left_micro)
+#		right_enc = encoded_image(right_img, redisClient, right_sec, right_micro)
 
 		redisClient.set(LEFT_IMG_VAR, left_enc)
 #		redisClient.set(RIGHT_IMG_VAR, right_enc)
