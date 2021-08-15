@@ -19,7 +19,7 @@ import perls2.controllers.utils.transform_utils as T
 
 AXIS_DIM_NUM = {'x': 0, 'y': 1, 'z': 2}
 
-DEFAULT_ROTATION_DELTA_VAL = np.pi / 600.0
+DEFAULT_ROTATION_DELTA_VAL = np.pi / 100.0
 
 
 def compute_error(goal_state, new_state):
@@ -157,7 +157,7 @@ class OpSpaceDemo(Demo):
                 as quaternion.
         """
         if self.test_fn =="move_ee_delta":
-            action = get_delta(goal_pose, current_pose)
+            action = self.get_delta(goal_pose, current_pose)
         elif self.test_fn =="set_ee_pose":
             action = goal_pose
         else:

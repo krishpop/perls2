@@ -1,8 +1,9 @@
 # Cfg file for  Demo control environment
 world:
-  type: 'Bullet' #'Bullet' or 'Real'
-  robot: 'panda' #'sawyer'
+  type: 'Real' #'Bullet' or 'Real'
+  robot: 'panda'
   controlType: 'EEImpedance'
+
 data_dir: 'data'
 
 # Simulation parameters
