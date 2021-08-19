@@ -2,8 +2,7 @@
 """
 
 import abc
-import pybullet
-
+import time
 from perls2.worlds.world import World
 from perls2.arenas.real_arena import RealArena
 from perls2.robots.real_robot_interface import RealRobotInterface
@@ -34,28 +33,29 @@ class RealWorld(World):
 
         self.name = name
         self.use_visualizer = use_visualizer
-        # Connect to pybullet to compute kinematics for robots
-        if self.use_visualizer:
-            self._physics_id = pybullet.connect(pybullet.GUI)
-        else:
-            self._physics_id = pybullet.connect(pybullet.DIRECT)
-
-        # Pybullet sim parmeters
-        pybullet.setGravity(0, 0, -10, physicsClientId=self._physics_id)
 
         # Learning parameters
         self.episode_num = 0
 
-        # TODO: ctl_steps_per_action - this has more to do with OSC
-        # Create an arena to load robot and objects
-        self.arena = RealArena(self.config, self._physics_id)
+        self.arena = RealArena(self.config)
+
         self.robot_interface = RealRobotInterface.create(
-                                                 config=self.config,
-                                                 physics_id=self._physics_id,
-                                                 arm_id=self.arena.arm_id)
-        self.sensor_interface = KinectCameraInterface(self.config)
+            config=self.config,
+            controlType=self.config['world']['controlType'])
+
+        
+        self.has_camera = False
+        if 'sensor' in self.config:
+            if 'real_camera' in self.config['sensor']:
+                self.has_camera = True
+                # self.camera_interface = KinectCameraInterface(self.config)
+
 
         self.is_sim = False
+
+        self.dim_num = 0
+        self.has_object = False
+        self.last_step_call = None
 
     def reset(self):
         """Reset the environment.
@@ -64,37 +64,23 @@ class RealWorld(World):
             The observation.
         """
         # reload robot to restore body after any collisions
-        pass
-
-    def step(self):
+        #self.robot_interface.reset()
+        pass 
+        
+    def step(self, start=None):
         """Take a step.
 
-        Args: None
+        Args:
+            start (float): time.time() timestamp taken from before policy computes action.
+                This is to enforce policy frequency. If start is None, policy frequency is 
+                not enforced.
+
         Returns: None
 
-        Takes a step forward, since this happens naturally in reality, we don't
-        do anything.
         """
-        pass
+        self.robot_interface.step()
 
-    def visualize(self, observation, action):
-        """Visualize the action - that is,
-        add visual markers to the world (in case of sim)
-        or execute some movements (in case of real) to
-        indicate the action about to be performed.
-
-        Args:
-            observation: The observation of the current step.
-            action: The selected action.
-        """
-        pass
-
-    def handle_exception(self, e):
-        """Handle an exception.
-        """
-        pass
-
-    @property
-    def info(self):
-        return {
-                }
+        if start is not None:
+            while (time.time() - start) < (1./float(self.config['policy_freq'])):
+                pass
+        self.action_set = False

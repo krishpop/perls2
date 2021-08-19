@@ -1,18 +1,15 @@
 """The parent class for environments.
 
 """
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
-import os.path
 import abc  # For abstract class definitions
 import six  # For abstract class definitions
 import gym
 import gym.spaces as spaces
 import numpy as np
-
+import logging
 # Use YamlConfig for config files
 from perls2.utils.yaml_config import YamlConfig
 # Use world factory to create world based on config
@@ -27,79 +24,118 @@ class Env(gym.Env):
         config (dict): A dict containing parameters to create an arena, robot
             interface, sensor interface and object interface. They also contain
             specs for learning, simulation and experiment setup.
-        arena (Arena): Manages the sim by loading models (in both sim/real envs)
+        arena (Arena): Manages the sim by loading models in both sim/real envs.
             and for simulations, randomizing objects and sensors parameters.
-        robot_interface (RobotInterface): Communicates with robots and executes
-            robot commands.
-        sensor_interface (SensorInterface): Retrieves sensor info and executes
-            changes to extrinsic/intrinsic params.
-        object_interface (ObjectInterface): Retrieves object info and excecutes
-            changes to params.
-
-    Public methods (similar to openAI gym):
-
-        step: Step env forward and return observation, reward, termination, info.
-            Not typically user-defined but may be modified.
-
-        reset: Reset env to initial setting and return observation at initial state.
-            Some aspects such as randomization are user-defined
-        render:
-        close:
-        seed:
-
+        robot_interface (perls2.RobotInterface): Communicates with robots and
+            executes robot commands.
+        sensor_interface (perls2.SensorInterface): Retrieves sensor info and
+            executes changes to extrinsic/intrinsic params.
+        object_interfaces (dict): Dictionary of ObjectInterfaces
+        action_space
     """
 
     def __init__(self,
-                 cfg_path,
+                 config,
                  use_visualizer=False,
                  name=None):
         """Initialize.
 
         Args:
-            cfg_path (str): A relative filepath to the config file.
-                e.g. 'cfg/my_config.yaml'
+            config (str, YamlConfig): A relative filepath to the config file. Or a parsed YamlConfig file as a dictionary.
+                e.g. cfg/my_config.yaml
+
             use_visualizer (bool): A flag for whether or not to use visualizer
+
             name (str): of the environment
 
-                See documentation for more details about config files.
+        Notes:
+            See documentation for more details about config files.
         """
 
         # Get config dictionary.
-        self.config = YamlConfig(cfg_path)
+        if isinstance(config, YamlConfig) or isinstance(config, dict):
+            self.config = config
+        else:
+            self.config = YamlConfig(config)
+        self._name = name
         self.world = God.make_world(self.config,
-                                   use_visualizer,
-                                   name)
+                                    use_visualizer,
+                                    name)
+
+        self.initialize()
+
+    def initialize(self):
+        """Create attributes for environment.
+
+        This function creates the following attributes:
+            - Arena
+            - RobotInterface
+            - SensorInterface
+            - ObjectInterface(s) (if applicable)
+            - observation_space
+            - action_space
+            - various counters.
+
+        This is a public function as sometimes it is necessary to reinitialize
+        an environment to fully reset a simulation.
+
+        Args: None
+        Returns: None
+        """
 
         # Environment access the following attributes of the world directly.
         self.arena = self.world.arena
         self.robot_interface = self.world.robot_interface
-        self.sensor_interface = self.world.sensor_interface
+        if self.world.has_camera:
+            self.camera_interface = self.world.camera_interface
 
+        self.has_object = self.world.has_object
         # Currently only sim worlds support object interfaces
         if self.world.is_sim:
-            self.object_interfaces_dict = self.world.object_interfaces_dict
+            if self.has_object:
+                self.object_interfaces = self.world.object_interfaces
 
         # Set observation space using gym spaces
         #    - Box for continuous, Discrete for discrete
-        self.observation_space = spaces.Box(
-            low=np.array(self.config['env']['observation_space']['low']),
-            high=np.array(self.config['env']['observation_space']['high']),
-            dtype=np.float32)
-
-        self.action_space = spaces.Box(
-            low=np.array(self.config['env']['action_space']['low']),
-            high=np.array(self.config['env']['action_space']['high']),
-            dtype=np.float32)
-
-        if (self.config['world']['type'] == 'Bullet' or
-                self.config['world']['type'] == 'Real'):
+        if 'env' in self.config:
+            if 'observation_space' in self.config['env']:
+                self.observation_space = spaces.Box(
+                    low=np.array(self.config['env']['observation_space']['low']),
+                    high=np.array(self.config['env']['observation_space']['high']),
+                    dtype=np.float32)
+            else:
+                self.observation_space = spaces.Box(
+                    low=np.array([0]*3),
+                    high=np.array([1]*3),
+                    dtype=np.float32)
+        # Set action space using gym spaces.
+        if 'env' in self.config:
+            if 'action_space' in self.config['env']:
+                self.action_space = spaces.Box(
+                    low=np.array(self.config['env']['action_space']['low']),
+                    high=np.array(self.config['env']['action_space']['high']),
+                    dtype=np.float32)
+            else:
+                self.action_space = spaces.Box(
+                    low=np.array([-1.0]*3),
+                    high=np.array([1.0]*3),
+                    dtype=np.float32)
+        # Real worlds use pybullet for IK and robot control.
+        if (self.config['world']['type'] == 'Bullet'):
             self._physics_id = self.world._physics_id
 
         self.MAX_STEPS = self.config['sim_params']['MAX_STEPS']
         self.episode_num = 0
         self.num_steps = 0
 
-    @abc.abstractmethod
+    @property
+    def name(self):
+        return self._name
+    
+    @name.setter
+    def name(self, new_name):
+        self._name = new_name
+
     def reset(self):
         """Reset the environment.
 
@@ -110,16 +146,12 @@ class Env(gym.Env):
         self.num_steps = 0
         self.world.reset()
         self.robot_interface.reset()
-        self.sensor_interface.reset()
-        if (self.world.is_sim):
-            self.object_interface.reset()
-
+        self.camera_interface.reset()
         observation = self.get_observation()
 
         return observation
 
-    @abc.abstractmethod
-    def step(self, action):
+    def step(self, action, start=None):
         """Take a step.
 
         Execute the action first, then step the world.
@@ -128,13 +160,15 @@ class Env(gym.Env):
 
         Args:
             action: The action to take.
+            start: timestamp (time.time()) taken before policy computes action.
+                This helps enforce policy frequency.
         Returns:
             Observation, reward, termination, info for the environment
                 as a tuple.
         """
         self._exec_action(action)
-        self.world.step()
-        self.num_steps = self.num_steps+1
+        self.world.step(start)
+        self.num_steps = self.num_steps + 1
 
         termination = self._check_termination()
 
@@ -149,7 +183,6 @@ class Env(gym.Env):
 
         return observation, reward, termination, info
 
-    @abc.abstractmethod
     def get_observation(self):
         """Get observation of current env state.
 
@@ -171,7 +204,13 @@ class Env(gym.Env):
         raise NotImplementedError
 
     def render(self, mode='human', close=False):
-        """ Render the gym environment
+        """ Render the gym environment.
+
+        See OpenAI.gym reference.
+
+        Args:
+            mode (str): string indicating type of rendering mode.
+            close (bool): open/closed rendering.
         """
         raise NotImplementedError
 
@@ -188,12 +227,25 @@ class Env(gym.Env):
             successful, or other useful information for the agent.
         """
 
-        return {
-                'name': type(self).__name__,
-                }
+        return {'name': type(self).__name__}
 
-    @abc.abstractmethod
     def rewardFunction(self):
         """ Compute and return user-defined reward for agent given env state.
         """
-        raise NotImplementedError
+        logging.warning("rewardFunction not defined!")
+        return 0
+
+    def _check_termination(self):
+        """Check if episode has reached max number of steps.
+        """
+        return self.num_steps >= self.MAX_STEPS
+
+    def is_done(self):
+        """Public wrapper to check episode termination.
+        """
+        return self._check_termination()
+
+    def is_success(self):
+        """Check if the task condition is reached."""
+        logging.warning("is_success not defined!")
+        return False

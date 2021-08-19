@@ -84,15 +84,19 @@ from moveit_msgs.srv import (
 import actionlib
 from safenet import SafenetMonitor
 
+from perls2.worlds.bullet_world import BulletWorld
+
 def bstr_to_ndarray(array_bstr):
     """Convert bytestring array to 1d array
     """
     return np.fromstring(array_bstr[1:-1], dtype=np.float, sep = ',')
 
 class SawyerCtrlInterface(object):
-    def __init__(self, use_safenet=False,
-                       use_moveit=False,
-                       node_name='sawyer_interface'):
+    def __init__(self, 
+                 config='cfg/sawyer_ctrl_config.yaml', 
+                 use_safenet=False,
+                 use_moveit=False,
+                 node_name='sawyer_interface'):
         """
         Initialize Sawyer Robot for control
 
@@ -202,6 +206,7 @@ class SawyerCtrlInterface(object):
         rospack = rospkg.RosPack()
 
         self._clid = pb.connect(pb.DIRECT)
+        
         pb.resetSimulation()
         # TODO: make this not hard coded
         sawyer_urdf_path = \
@@ -268,9 +273,9 @@ class SawyerCtrlInterface(object):
 
         #Set desired pose to current pose initially
         self.redisClient.set('robot::desired_ee_pose', str(self.ee_pose))
+        self.redisClient.set('robot::tau_desired', str(self.tau))
 
         rospy.logdebug('Control Interface initialized')
-
 
         ##
 
@@ -688,6 +693,10 @@ class SawyerCtrlInterface(object):
         return jacobianMat
 
     @property
+    def J(self, q=None):
+        if q is None:
+            q = self.q
+    @property
     def info(self):
         """
         Collect and return information about parameters of the robot
@@ -831,6 +840,7 @@ class SawyerCtrlInterface(object):
             'Input number of torque values must match the number of joints'
 
         command = {self._joint_names[i]: taud[i] for i in range(len(self._joint_names))}
+
         self._limb.set_joint_torques(command)
 
     def q_dq_ddq(self, value):
@@ -863,6 +873,8 @@ class SawyerCtrlInterface(object):
         self.redisClient.set('robot::ee_position', str(self.ee_position))
         self.redisClient.set('robot::ee_pose', str(self.ee_pose))
         self.redisClient.set('robot::ee_orientation', str(self.ee_orientation))
+        self.redisClient.set('robot::ee_v', str(self.ee_v))
+        self.redisClient.set('robot::ee_omega', str(self.ee_omega))
         self.redisClient.set('robot::q', str(self.q))
         self.redisClient.set('robot::dq', str(self.dq))
         self.redisClient.set('robot::tau', str(self.tau))
@@ -1711,6 +1723,11 @@ class SawyerCtrlInterface(object):
     def qd(self):
         return bstr_to_ndarray(self.redisClient.get('robot::qd'))
 
+    @property
+    def desired_torque(self):
+        return bstr_to_ndarray(self.redisClient.get('robot::tau_desired'))
+    
+
     def process_cmd(self):
         if (self.cmd_type == b'ee_pose'):
             rospy.loginfo('des_pose ' + str(self.desired_ee_pose))
@@ -1721,13 +1738,12 @@ class SawyerCtrlInterface(object):
             self.ee_pose = self.desired_ee_pose
         elif(self.cmd_type == b'joint_position'):
             self.q = self.qd
+        elif (self.cmd_type == b'torque'):
+            self.tau = self.desired_torque
         elif(self.cmd_type == b'reset_to_neutral'):
             self.reset_to_neutral()
         else:
             rospy.logwarn('Unknown command')
-
-
-
 
 
 ### MAIN ###
@@ -1754,7 +1770,7 @@ if __name__ == "__main__":
         ctrlInterface.process_cmd()
         ctrlInterface.update()
 
-        while ((time.time() - start) < 0.1):
+        while ((time.time() - start) < 0.001):
             pass
 
 

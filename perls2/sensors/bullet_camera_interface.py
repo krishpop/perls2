@@ -6,7 +6,7 @@ from perls2.sensors.sim_camera_interface import SimCameraInterface
 import numpy as np
 import pybullet
 
-FOV = 60
+FOV =90
 NEAR_PLANE = 0.02
 FAR_PLANE = 100
 
@@ -19,6 +19,21 @@ DEPTH_WIDTH = 512
 
 
 class BulletCameraInterface(SimCameraInterface):
+    """" Interface for rendering camera images from PyBullet.
+
+    Attributes:
+        image_height (int): Height of the image in pixels.
+        image_width (int): Width of the image in pixels.
+        near (float): The distance to the near plane.
+        far (float): The distance to the far plane.
+        distance (float): The distance from the camera to the object.
+        cameraEyePosition (list): 3f xyz position of camera in world frame.
+        cameraTargetPosition (list): 3f xyz position of camera target in world frame.
+        cameraUpVectory (list): 3f vector describing camera up direction.
+        view_matrix (np.npdarray): View matrix
+        projection_matrix (np.ndarray): projection matrix.
+        name (str): string identifying name of camera.
+    """
     def __init__(self,
                  physics_id=None,
                  image_height=500,
@@ -26,29 +41,31 @@ class BulletCameraInterface(SimCameraInterface):
                  near=0.02,
                  far=100,
                  distance=1.0,
-                 cameraEyePosition=[0.6, 0., 1.75],
+                 fov=60,
+                 cameraEyePosition=[0.6, 0., 1.0],
                  cameraTargetPosition=[0.6, 0., 0],
                  cameraUpVector=[1., 0., 1.],
                  name='bullet_camera'):
         """Initialize
 
-        If there are extrinsics of the form RGB_intrisics.npy,
-        robot_RGB_rotation.npy, robot_RGB_translation.npy in some
-        directory, use that as an argument which takes higher priority than
-        the view_matrix and projection_matrix.
-
         Args:
-            image_height: The height of the image.
-            image_width: The width of the image.
-            near: The distance to the near plane.
-            far: The distance to the far plane.
-            distance: The distance from the camera to the object.
+            image_height (int): Height of the image in pixels.
+            image_width (int): Width of the image in pixels.
+            near (float): The distance to the near plane.
+            far (float): The distance to the far plane.
+            distance (float): The distance from the camera to the object.
+            cameraEyePosition (list): 3f xyz position of camera in world frame.
+            cameraTargetPosition (list): 3f xyz position of camera target in world frame.
+            cameraUpVectory (list): 3f vector describing camera up direction.
+            name (str): string identifying name of camera.
+
         """
         super().__init__(image_height, image_width, None)
         self._physics_id = physics_id
         self._near = near
         self._far = far
         self._distance = distance
+        self._fov = fov
         self.cameraEyePosition = cameraEyePosition
         self.cameraTargetPosition = cameraTargetPosition
         self.cameraUpVector = cameraUpVector
@@ -59,53 +76,145 @@ class BulletCameraInterface(SimCameraInterface):
             cameraUpVector=self.cameraUpVector)
 
         self._projection_matrix = pybullet.computeProjectionMatrixFOV(
-            fov=FOV,
+            fov=self._fov,
             aspect=float(image_width) / float(image_height),
-            nearVal=NEAR_PLANE,
-            farVal=FAR_PLANE)
+            nearVal=self._near,
+            farVal=self._far,
+            )
+
+
+        self._K = self.get_intrinsics()
+
+        self.start()
 
     def set_projection_matrix(self, projection_matrix):
+        """Set projection matrix for the camera.
+        Args:
+            projection_matrix (list): list of 16 floats for pybullet projection matrix.
+        """
         self._projection_matrix = projection_matrix
 
     def set_view_matrix(self, view_matrix):
+        """ Set View matrix for the camera
+        Args:
+            view_matrix (list): list of 16 floats for pybullet view_matrix
+        """
         self._view_matrix = view_matrix
+
+
+    def get_intrinsics(self):
+        """ Calculate camera intrinsic matrix.
+        """
+        # get projection matrix as 4x4
+        P = self.projection_matrix
+        w, h = self._image_width, self._image_height
+        znear, zfar = self._near, self._far
+
+        a = (2.0 * znear) / P[0, 0]
+        b = P[2, 0] * a
+        right = (a + b) / 2.0
+        left = b - right
+        c = (2.0 * znear) / P[1, 1]
+        d = P[3, 1] * c
+        top = (c + d) / 2.0
+        bottom = d - top
+        fu = w * znear / (right - left)
+        fv = h * znear / (top - bottom)
+
+        u0 = w - right * fu / znear
+        v0 = h - top * fv / znear
+        return np.array([[fu, 0, u0], [0, fv, v0], [0, 0, 1]])
+
+    def deproject(self, pixel, depth, is_world_frame=True):
+        """Deprojects a single pixel with a given depth into a 3D point.
+        Parameters
+        ----------
+        pixel :
+            2D point representing the pixel location in camera image.
+        depth :
+            Depth value at the given pixel location.
+        is_world_frame :
+            True if the 3D point is defined in the world frame, (Default value = True)
+        Returns
+        -------
+        point
+            The deprojected 3D point.
+        """
+        x, y = pixel
+        cam_x = (x - self.K[0, 2]) / self.K[0, 0] * depth
+        cam_y = (y - self.K[1, 2]) / self.K[1, 1] * depth
+        point = np.asarray([cam_x, cam_y, depth])
+
+        camera_R = -self.view_matrix[:3, :3]
+
+        camera_pos = -self.view_matrix[3, :3]
+
+        if is_world_frame:
+            point = camera_pos + np.dot(point, camera_R.T)
+
+        return point
 
     def start(self):
         """Starts the camera stream."""
         self.frames()
 
+    def stop(self):
+        """Stops the sensor stream.
+
+        Returns:
+            True if succeed, False if fail.
+        """
+        pass
+
     def set_physics_id(self, physics_id):
         """ Set unique physics client id
+        Args:
+            physics_id (int): new physics id to set.
         """
         self._physics_id = physics_id
 
-    def frames(self):
+    def frames(self, height=None, width=None):
         """Render the world at the current time step.
-            Args: None
-            Returns:
-                dict with rgb, depth and segmask image.
+        Args:
+            height (int): (optional) height of image in pixels
+            width (int): (optional) width of rendered image in pixels
+        Returns:
+            dict with rgb, depth and segmask image.
         """
+        if height is None:
+            height = self._image_height
+        if width is None:
+            width = self._image_width
+
+        if width != self._image_width or height != self._image_height:
+            # Recalculate projection matrix
+            projection_matrix = pybullet.computeProjectionMatrixFOV(
+            fov=self._fov,
+            aspect=float(width) / float(height),
+            nearVal=self._near,
+            farVal=self._far,
+            )
+        else:
+            projection_matrix = self._projection_matrix
+
         _, _, rgba, depth, segmask = pybullet.getCameraImage(
-            height=self._image_height,
-            width=self._image_width,
+            height=height,
+            width=width,
             viewMatrix=self._view_matrix,
-            projectionMatrix=self._projection_matrix,
+            projectionMatrix=projection_matrix,
             physicsClientId=self._physics_id)
 
         rgba = np.array(rgba).astype('uint8')
-        rgba = rgba.reshape((self._image_height, self._image_width, 4))
+        rgba = rgba.reshape((height, width, 4))
+        # invert
         image = rgba[:, :, :3]
 
+        # image = np.invert(image)
         depth = np.array(depth).astype('float32')
-        depth = depth.reshape((self._image_height, self._image_width))
+        depth = depth.reshape((height, width))
 
         segmask = np.array(segmask).astype('uint8')
-        segmask = segmask.reshape((self._image_height, self._image_width))
-
-        # if self._upside_down:
-        #     image = image[::-1, ::-1, :]
-        #     depth = depth[::-1, ::-1]
-        #     segmask = segmask[::-1, ::-1]
+        segmask = segmask.reshape((height, width))
 
         # This is a fix for the depth image rendering in
         # pybullet, by following:
@@ -116,10 +225,47 @@ class BulletCameraInterface(SimCameraInterface):
                (self._far + self._near - z_n * (self._far - self._near)))
         depth = z_e
 
-        return {
-                'image': image,
+        return {'rgb': image,
                 'depth': depth,
                 'segmask': segmask,
+                'rgba': rgba}
+
+    def frames_rgb(self, height=None, width=None):
+        """Render the world at the current time step.
+            Args: None
+            Returns:
+                dict with rgb, depth and segmask image.
+        """
+        if height is None:
+            height = self._image_height
+        if width is None:
+            width = self._image_width
+
+        if width != self._image_width or height != self._image_height:
+            # Recalculate projection matrix
+            projection_matrix = pybullet.computeProjectionMatrixFOV(
+            fov=self._fov,
+            aspect=float(width) / float(height),
+            nearVal=self._near,
+            farVal=self._far,
+            )
+        else:
+            projection_matrix = self._projection_matrix
+
+        _, _, rgba, _, _  = pybullet.getCameraImage(
+            height=height,
+            width=width,
+            viewMatrix=self._view_matrix,
+            projectionMatrix=projection_matrix,
+            physicsClientId=self._physics_id)
+
+        rgba = np.array(rgba).astype('uint8')
+        rgba = rgba.reshape((height, width, 4))
+        # invert
+        image = rgba[:, :, :3]
+        #image = np.invert(image)
+        return {
+                'rgb': image,
                 }
 
     def place(self, new_camera_pos):
@@ -137,149 +283,38 @@ class BulletCameraInterface(SimCameraInterface):
         self._view_matrix = pybullet.computeViewMatrix(
                 cameraEyePosition=self.cameraEyePosition,
                 cameraTargetPosition=self.cameraTargetPosition,
-                cameraUpVector=self.cameraUpVector)
+                cameraUpVector=self.cameraUpVector,
+                physicsClientId=self._physics_id)
 
         self._projection_matrix = pybullet.computeProjectionMatrixFOV(
-                fov=FOV,
+                fov=self._fov,
                 aspect=float(self.image_width) / float(self.image_height),
-                nearVal=NEAR_PLANE,
-                farVal=FAR_PLANE)
+                nearVal=self._near,
+                farVal=self._far,
+                physicsClientId = self._physics_id)
 
-    def set_calibration(self, K, rotation, translation):
-        """Set the camera calibration data.
-
-        Parameters
-        ----------
-        K :
-            The intrinsics matrix.
-        rotation :
-            The rotation matrix.
-        translation :
-            The translation vector.
-
-        Returns
-        -------
-
-        """
-        # Set projection matrix and view matrix.
-        self._projection_matrix = intrinsic_to_projection_matrix(
-                self._K, self._image_height, self._image_width,
-                self._near, self._far)
-
-        self._view_matrix = extrinsic_to_view_matrix(
-                self._rotation, self._translation, self._distance)
-
-    def project(self, point, is_world_frame=True):
-        """Projects a point cloud onto the camera image plane.
-
-        Parameters
-        ----------
-        point :
-            3D point to project onto the camera image plane.
-        is_world_frame :
-            True if the 3D point is defined in the world frame,
-            (Default value = False)
-
-        Returns
-        -------
-        pixel
-            2D pixel location in the camera image.
-
-        """
-        point = np.array(point)
-
-        if is_world_frame:
-            point = np.dot(point - self.pose.position, self.pose.matrix3)
-
-        projected = np.dot(point, self.K.T)
-        projected = np.divide(projected, np.tile(projected[2], [3]))
-        projected = np.round(projected)
-        pixel = projected[:2].astype(np.int16)
-
-        return pixel
-
-    def deproject(self, pixel, depth, is_world_frame=True):
-        """Deprojects a single pixel with a given depth into a 3D point.
-
-        Parameters
-        ----------
-        pixel :
-            2D point representing the pixel location in camera image.
-        depth :
-            Depth value at the given pixel location.
-        is_world_frame :
-            True if the 3D point is defined in the world frame,
-            (Default value = True)
-
-        Returns
-        -------
-        point
-            The deprojected 3D point.
-
-        """
-        x, y = pixel
-        cam_x = (x - self.K[0, 2]) / self.K[0, 0] * depth
-        cam_y = (y - self.K[1, 2]) / self.K[1, 1] * depth
-        point = [cam_x, cam_y, depth]
-
-        if is_world_frame:
-            point = self.pose.position + np.dot(point, self.pose.matrix3.T)
-
-        return point
-
-    def extrinsic_to_view_matrix(rotation, translation, distance):
-        """Convert the camera extrinsics to the view matrix.
-
-        The function takes HZ-style rotation matrix R and translation matrix t
-        and converts them to a Bullet/OpenGL style view matrix. the derivation
-        is pretty simple if you consider x_camera = R * x_world + t.
-
-        Parameters
-        ----------
-        distance :
-            The distance from the camera to the focus.
-        rotation :
-
-        translation :
-
-
-        Returns
-        -------
-
-        """
-        # The camera position in the world frame.
-        camera_position = rotation.T.dot(-translation)
-
-        # The focus in the world frame.
-        focus = rotation.T.dot(np.array([0, 0, distance]) - translation)
-
-        # The up vector is the Y-axis of the camera in the world frame.
-        up_vector = rotation.T.dot(np.array([0, 1, 0]))
-
-        # Compute the view matrix.
-        view_matrix = pybullet.computeViewMatrix(
-                    cameraEyePosition=camera_position,
-                    cameraTargetPosition=focus,
-                    cameraUpVector=up_vector)
-
-        return view_matrix
+        self.K = self.get_intrinsics()
 
     @property
     def image_height(self):
-        """ """
+        """ Height of rendered image.
+        """
         return self._image_height
 
     @property
     def image_width(self):
-        """ """
+        """Width of rendered image.
+        """
         return self._image_width
 
     @property
     def view_matrix(self):
-        """ """
-        return self._view_matrix
+        """View matrix.
+        """
+        return np.asarray(self._view_matrix).reshape(4,4)
 
     @property
     def projection_matrix(self):
-        """ """
-        return self._projection_matrix
+        """Projection matrix.
+        """
+        return np.asarray(self._projection_matrix).reshape(4,4)
