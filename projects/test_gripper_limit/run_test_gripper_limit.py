@@ -22,9 +22,10 @@ lower_limit = None
 upper_limit = None
 
 print ("================Gripper Tester===============")
+print ("Move the fingers of the gripper to a position and press a key to set the desired limit.\n")
 print("type 'l' to set the lower gripper limit")
 print("type 'u' to set the upper gripper limit")
-print("type 'e' to exit")
+print("type 'e' to exit\n")
 
 for ep_num in range(1):
     logging.debug('episode ' + str(ep_num - 1) + ' complete...pausing...')
@@ -48,7 +49,7 @@ for ep_num in range(1):
         elif inp == 'u':
             if lower_limit is not None and lower_limit > pos:
                 continue
-            
+
             print(f"upper limit set to: {pos}")
             upper_limit = pos
         elif inp == 'e':
