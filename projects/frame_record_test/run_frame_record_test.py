@@ -8,18 +8,18 @@ import cv2
 logging.basicConfig(level=logging.DEBUG)
 
 
-BASE_FILENAME = "test_recordings/episode_"
+BASE_FILENAME = "projects/frame_record_test/test_recordings/episode_"
 
 def get_action(observation):
     """Run your policy to produce an action.
     """
-    action = [0, 0, 0, 0, 0, 0]
+    action = [0, 0, 0]
     return action
 
 
-env = FrameRecordTest('frame_record_test.yaml', True, "TemplateEnv")
+env = FrameRecordTest('projects/frame_record_test/frame_record_test.yaml', True, "TemplateEnv")
 
-for ep_num in range(10):
+for ep_num in range(3):
     logging.debug('episode ' + str(ep_num - 1) + ' complete...pausing...')
     step = 0
     observation = env.reset()
@@ -32,7 +32,9 @@ for ep_num in range(10):
         start = time.time()
 
         frame = observation["left_frame"]
+        
         out_writer.write(frame)
+        cv2.imshow("test", frame)
 
         action = get_action(observation)
 
