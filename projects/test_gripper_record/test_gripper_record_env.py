@@ -1,10 +1,11 @@
 """Template Environment for Projects.
 """
 from perls2.envs.env import Env
+from perls2.sensors.gelsight_camera_interface import GelSightCameraInterface
 import numpy as np
 
 
-class TestCloseGripperEnv(Env):
+class TestGripperRecordEnv(Env):
     """The class for Pybullet Sawyer Robot environments performing a reach task.
     """
 
@@ -17,6 +18,7 @@ class TestCloseGripperEnv(Env):
         Set up any variables that are necessary for the environment and your task.
         """
         super().__init__(cfg_path, use_visualizer, name)
+        self.gelsight_interface = GelSightCameraInterface()
 
         self.GRIPPER_EPSILON = 0.05
         self.RESET_POS = 0.89
@@ -28,7 +30,7 @@ class TestCloseGripperEnv(Env):
         
         grip_value = self.robot_interface.gripper_position / self.robot_interface.GRIPPER_MAX_VALUE
         return grip_value
-        
+
     def _set_gripper_pos(self, value):
         if self.world.is_sim:
             self.robot_interface.set_gripper_to_value(value)
@@ -44,11 +46,7 @@ class TestCloseGripperEnv(Env):
         #Real world behavior
         self.gripper_des_val = value
         #self.robot_interface.stop_gripper()
-        self.robot_interface.set_gripper_to_value(value, mode="move")
-    
-    def _get_gripper_delta(self):
-
-        pass
+        self.robot_interface.set_gripper_to_value(value, mode=mode)
 
 
     def get_observation(self):
@@ -79,12 +77,20 @@ class TestCloseGripperEnv(Env):
         obs['object_pose'] = self.world.object_interfaces['object_name'].pose
 
         """
+        left_s, left_ms, left_frame = self.gelsight_interface.frames()
+        obs.update({
+            "left_frame_sec": left_s,
+            "left_frame_micro": left_ms,
+            "left_frame": left_frame
+        })
+        
         obs["gripper_pos"] = self.get_gripper_val()
 
         if self.world.is_sim:
             obs["new_comm_okay"] = True
         else:
             obs["new_comm_okay"] = abs(self.get_gripper_val() - self.gripper_des_val) <= self.GRIPPER_EPSILON
+        
         return obs
 
     def _exec_action(self, action):
